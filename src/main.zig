@@ -1,18 +1,33 @@
 const std = @import("std");
 
+const MAX_BUFFER_SIZE = 1024 * 1024 * 1024 * 4; // 4MB
+
 pub fn main() !void {
+    var args = std.process.args();
+    _ = args.skip();
+    const filename = args.next() orelse return;
+
     const stream = try std.net.connectUnixSocket("/tmp/prettierd.sock");
     defer stream.close();
 
-    var buffer: [1024]u8 = undefined;
-    var reader = stream.reader();
-    var writer = stream.writer();
+    std.log.info("connected, waiting for stdin", .{});
+    const stdin = std.io.getStdIn();
 
-    try writer.writeAll("hello");
+    try stream.writeAll(filename);
+    try stream.writeAll("$");
+    try streamUntilEof(stdin.reader(), stream.writer());
+    try stream.writeAll("$$$");
 
+    std.log.info("waiting for data", .{});
+    try streamUntilEof(stream.reader(), std.io.getStdOut().writer());
+}
+
+fn streamUntilEof(source_reader: anytype, dest_writer: anytype) !void {
+    var buf: [1024]u8 = undefined;
     while (true) {
-        const read = try reader.read(&buffer);
+        const read = try source_reader.read(&buf);
+
         if (read == 0) break;
-        std.debug.print("{s}", .{buffer[0..read]});
+        try dest_writer.writeAll(buf[0..read]);
     }
 }
