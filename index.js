@@ -1,8 +1,8 @@
 import * as net from "node:net";
 import * as fs from "node:fs/promises";
 import * as prettier from "prettier";
-// dupa udpasdadsalkdjsaldksajdslkadjsakldjsaldkd
-//
+
+const END_MARKER = "$prettierxd_done$";
 async function main() {
   await fs.rm("/tmp/prettierd.sock");
   const server = net
@@ -24,10 +24,13 @@ async function main() {
         input += data.toString();
       }
 
-      console.log("checking delimiter: ", input.slice(-3));
-      if (input.endsWith("$$$")) {
+      console.log("checking delimiter: ", input.slice(-END_MARKER.length));
+      if (input.endsWith(END_MARKER)) {
         console.log("formatting ", filepath);
-        const output = await prettier.format(input.slice(0, -3), { filepath });
+        const output = await prettier.format(
+          input.slice(0, -END_MARKER.length),
+          { filepath },
+        );
         socket.write(output);
         socket.end();
         filepath = undefined;

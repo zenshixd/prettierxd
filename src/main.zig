@@ -3,6 +3,8 @@ const std = @import("std");
 const MAX_BUFFER_SIZE = 1024 * 1024 * 1024 * 4; // 4MB
 
 pub fn main() !void {
+    var timer = std.time.Timer.start() catch unreachable;
+
     var args = std.process.args();
     _ = args.skip();
     const filename = args.next() orelse return;
@@ -16,10 +18,12 @@ pub fn main() !void {
     try stream.writeAll(filename);
     try stream.writeAll("$");
     try streamUntilEof(stdin.reader(), stream.writer());
-    try stream.writeAll("$$$");
+    try stream.writeAll("$prettierxd_done$");
 
     std.log.info("waiting for data", .{});
     try streamUntilEof(stream.reader(), std.io.getStdOut().writer());
+
+    std.log.info("done in {d}ms", .{timer.read() / 1_000_000});
 }
 
 fn streamUntilEof(source_reader: anytype, dest_writer: anytype) !void {
