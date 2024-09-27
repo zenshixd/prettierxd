@@ -1,16 +1,33 @@
 {
-  "name": "prettierd",
-  "version": "1.0.0",
-  "description": "",
+  "name": "prettierxd",
+  "version": "0.1.0",
+  "description": "Deamonified prettier with <5ms run time",
   "main": "index.js",
   "type": "module",
-  "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "bin": {
+    "prettierxd": "./zig-out/bin/prettierxd"
   },
-  "author": "",
-  "license": "ISC",
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js",
+    "start": "node index.js"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "scripts",
+    "zig-out",
+    "build.zig",
+    "build.zig.zon"
+  ],
+  "author": "zenshixd",
+  "license": "MIT",
   "dependencies": {
-    "prettier": "^3.3.3"
+    "prettier": "^3.3.3",
+    "tar-stream": "^3.1.7",
+    "unzipper": "^0.12.3",
+    "xz-decompress": "^0.2.2"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
