@@ -13,6 +13,8 @@ pub fn main() !void {
         std.debug.print("No filename provided\n", .{});
         return;
     };
+    const range = parseRangeArgs(&args);
+    std.log.debug("filename: {s}, range: {}", .{ filename, range });
 
     const stream = try connectToPrettierDaemon();
     defer stream.close();
@@ -20,12 +22,11 @@ pub fn main() !void {
     std.log.debug("connected, waiting for stdin", .{});
     const stdin = std.io.getStdIn();
 
-    var cwd_buf: [1024]u8 = undefined;
-    const cwd = try std.fs.cwd().realpath(".", cwd_buf[0..]);
-
-    try stream.writeAll(cwd[0..]);
-    try stream.writeAll(std.fs.path.sep_str);
     try stream.writeAll(filename);
+    try stream.writeAll(&[_]u8{0});
+    try stream.writeAll(range.start);
+    try stream.writeAll(",");
+    try stream.writeAll(range.end);
     try stream.writeAll(&[_]u8{0});
     try streamUntilEof(stdin.reader(), stream.writer());
     try stream.writeAll(&[_]u8{0});
@@ -34,6 +35,36 @@ pub fn main() !void {
     try streamUntilEof(stream.reader(), std.io.getStdOut().writer());
 
     std.log.debug("done in {d}ms", .{timer.read() / 1_000_000});
+}
+
+const Range = struct {
+    start: []const u8 = "-1",
+    end: []const u8 = "-1",
+};
+
+fn parseRangeArgs(args: *std.process.ArgIterator) Range {
+    var range = Range{};
+
+    var arg = args.next();
+    if (arg == null) return range;
+
+    const matchers = .{
+        .{ "--range-start", "start" },
+        .{ "--range-end", "end" },
+    };
+    inline for (matchers) |kv| {
+        var split_iter = std.mem.splitScalar(u8, arg.?, '=');
+        if (std.mem.eql(u8, split_iter.next().?, kv[0])) {
+            @field(range, kv[1]) = split_iter.next() orelse {
+                std.debug.print("No value provided for {s}\n", .{kv[0]});
+                return range;
+            };
+
+            arg = args.next() orelse return range;
+        }
+    }
+
+    return range;
 }
 
 fn streamUntilEof(source_reader: anytype, dest_writer: anytype) !void {
@@ -77,7 +108,7 @@ fn startPrettierDaemon() !std.net.Stream {
 
     var child_process = std.process.Child.init(&[_][]const u8{ "node", server_file }, gpa.allocator());
 
-    const behaviour = if (builtin.mode == .Debug) .Inherit else .Ignore;
+    const behaviour = .Ignore;
     child_process.stdin_behavior = behaviour;
     child_process.stdout_behavior = behaviour;
     child_process.stderr_behavior = behaviour;

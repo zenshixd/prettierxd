@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { assert } from "node:assert";
+import assert from "node:assert";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -8,19 +8,17 @@ import * as tar from "tar-stream";
 import unzipper from "unzipper";
 import xz from "xz-decompress";
 
-const ZIG_VERSION = "0.13.0";
 const tmpdir = os.tmpdir();
+const ZIG_VERSION = "0.13.0";
+const ZIG_EXECUTABLE_NAME = process.platform === "win32" ? "zig.exe" : "zig";
 
-//build();
-test();
-
-async function test() {}
+build();
 
 async function build() {
   await downloadZig();
   console.log("Compiling prettierxd...");
   spawn(
-    `${tmpdir}/${getZigArchiveName()}/zig`,
+    `${tmpdir}/${getZigArchiveName()}/${ZIG_EXECUTABLE_NAME}`,
     ["build", "run", "-Doptimize=ReleaseFast", "--summary", "all"],
     {
       stdio: "inherit",
@@ -76,9 +74,7 @@ async function downloadZig() {
   const downloadUrl = getZigDownloadUrl();
   console.log(`Downloading Zig from ${downloadUrl}`);
   const response = await fetch(downloadUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download Zig: ${response.statusText}`);
-  }
+  assert.ok(response.ok, response.statusText);
 
   if (process.platform === "win32") {
     await unpackZip(response);
@@ -89,7 +85,7 @@ async function downloadZig() {
 
 async function unpackZip(response) {
   const size = parseInt(response.headers.get("content-length"));
-  assert(size > 0);
+  assert.ok(size > 0, "Invalid zip file");
   const source = await unzipper.Open.custom({
     stream: response.body,
     size,
@@ -102,6 +98,7 @@ async function unpackZip(response) {
     } else {
       const dest = await fs.open(fullPath, "w+", 0o755);
       await pipeline(file.stream(), dest.createWriteStream());
+      await dest.close();
     }
   }
 }
@@ -111,30 +108,18 @@ async function unpackTarXz(response) {
   const extract = tar.extract();
 
   extract.on("entry", async (header, stream, next) => {
-    try {
-      const fullPath = path.join(tmpdir, header.name);
-      if (header.type === "directory") {
-        await fs.mkdir(fullPath, { recursive: true });
+    const fullPath = path.join(tmpdir, header.name);
+    if (header.type === "directory") {
+      await fs.mkdir(fullPath, { recursive: true });
+      next();
+    } else {
+      const dest = await fs.open(fullPath, "w+", 0o755);
+      stream.pipe(dest.createWriteStream());
+      stream.on("end", async () => {
+        await dest.close();
         next();
-      } else {
-        const dest = await fs.open(fullPath, "w+", 0o755);
-        stream.pipe(dest.createWriteStream());
-        stream.on("end", async () => {
-          try {
-            await dest.close();
-            next();
-          } catch (e) {
-            console.error(e);
-          }
-        });
-      }
-    } catch (e) {
-      console.error(e);
+      });
     }
-  });
-
-  extract.on("error", (e) => {
-    console.error(e);
   });
 
   await pipeline(new xz.XzReadableStream(response.body), extract);
