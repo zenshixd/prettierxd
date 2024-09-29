@@ -1,24 +1,22 @@
 import net from "node:net";
 import path from "node:path";
+import os from "node:os";
 import { Console } from "node:console";
 import fs from "node:fs";
 import * as prettier from "prettier";
 
-const TMP_DIR =
-  process.platform === "win32"
-    ? "C:\\Windows\\Temp"
-    : process.platform === "darwin"
-      ? "/private/tmp"
-      : "/tmp";
+const TMP_DIR = os.tmpdir();
 
-export const SOCKET_FILENAME = `${TMP_DIR}/prettierxd.sock`;
+export const SOCKET_FILENAME = path.join(
+  process.platform === "win32" ? "\\\\?\\pipe" : TMP_DIR,
+  "prettierxd.sock",
+);
 const END_MARKER = "\0";
 
 export function startDaemon() {
   const stdout = fs.createWriteStream(path.join(TMP_DIR, "prietterxd.log"));
   const stderr = fs.createWriteStream(path.join(TMP_DIR, "prietterxd.err.log"));
   const console = new Console({ stdout, stderr });
-
   const server = net
     .createServer()
     .listen(SOCKET_FILENAME, () =>
@@ -65,7 +63,7 @@ export function startDaemon() {
           config,
         );
 
-        socket.write(output);
+        socket.write(output + END_MARKER);
         socket.end();
         filepath = undefined;
         rangeStart = undefined;

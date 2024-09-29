@@ -86,10 +86,10 @@ async function downloadZig() {
 async function unpackZip(response) {
   const size = parseInt(response.headers.get("content-length"));
   assert.ok(size > 0, "Invalid zip file");
-  const source = await unzipper.Open.custom({
-    stream: response.body,
-    size,
-  });
+
+  const source = await unzipper.Open.buffer(
+    Buffer.from(await response.arrayBuffer()),
+  );
 
   for (const file of source.files) {
     const fullPath = path.join(tmpdir, file.path);
