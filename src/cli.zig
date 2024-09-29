@@ -48,16 +48,16 @@ pub fn main() !void {
     std.log.debug("done in {d}ms", .{timer.read() / 1_000_000});
 }
 
-fn getSocketFilename(gpa: std.mem.Allocator) ![]const u8 {
+fn getSocketFilename(allocator: std.mem.Allocator) ![]const u8 {
     if (builtin.os.tag == .windows) {
-        const socketFilename = try std.fs.path.join(gpa, &.{ "\\\\?\\pipe", PRETTIERXD_SOCKET_FILENAME });
+        const socketFilename = try std.fs.path.join(allocator, &.{ "\\\\?\\pipe", PRETTIERXD_SOCKET_FILENAME });
         return socketFilename;
     }
 
-    const tmpDir = std.process.getEnvVarOwned(gpa.allocator(), "TMPDIR");
-    defer gpa.allocator().free(tmpDir);
+    const tmpDir = try std.process.getEnvVarOwned(allocator, "TMPDIR");
+    defer allocator.free(tmpDir);
 
-    const socketFilename = try std.fs.path.join(gpa.allocator(), &.{ tmpDir, PRETTIERXD_SOCKET_FILENAME });
+    const socketFilename = try std.fs.path.join(allocator, &.{ tmpDir, PRETTIERXD_SOCKET_FILENAME });
     return socketFilename;
 }
 
@@ -171,7 +171,7 @@ fn waitUntilDeamonReady(socketFilename: []const u8) !DaemonStream {
 fn startProcess(allocator: std.mem.Allocator, params: StartProcess) !void {
     return switch (builtin.os.tag) {
         .windows => try startProcessWindows(allocator, params),
-        .linux, .macos => try startProcessPosix(),
+        .linux, .macos => try startProcessPosix(allocator, params),
         else => @panic("unsupported os"),
     };
 }
@@ -264,19 +264,21 @@ fn startProcessPosix(allocator: std.mem.Allocator, params: StartProcess) !void {
         else => |e| return e,
     };
     defer posix.close(dev_null_fd);
-    const arena = std.heap.ArenaAllocator.init(allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     const argvZ = try arena.allocator().allocSentinel(?[*:0]const u8, params.args.len, null);
     for (params.args, 0..) |arg, i| argvZ[i] = (try arena.allocator().dupeZ(u8, arg)).ptr;
 
+    const envp = try std.process.createEnvironFromExisting(arena.allocator(), @ptrCast(std.os.environ.ptr), .{});
+
     const pid_result = try posix.fork();
 
     if (pid_result == 0) {
-        try posix.dup2(posix.STDIN_FILENO, dev_null_fd);
-        try posix.dup2(posix.STDOUT_FILENO, dev_null_fd);
-        try posix.dup2(posix.STDERR_FILENO, dev_null_fd);
+        try posix.dup2(dev_null_fd, posix.STDIN_FILENO);
+        try posix.dup2(dev_null_fd, posix.STDOUT_FILENO);
+        try posix.dup2(dev_null_fd, posix.STDERR_FILENO);
 
-        return posix.execvpeZ(argvZ[0].?.ptr, argvZ.ptr, null);
+        return posix.execvpeZ(argvZ[0].?, argvZ.ptr, envp.ptr);
     }
 }
