@@ -25,7 +25,7 @@ test("should reformat code", (t, done) => {
   socket.on("data", (data) => {
     const result = data.toString();
     console.log("data", result);
-    assert.equal(result, 'console.log("hello");\n');
+    assert.equal(result, 'console.log("hello");\n\0');
     socket.end();
     done();
   });

@@ -1,9 +1,10 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import assert from "node:assert";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import fs from "node:fs/promises";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 import * as tar from "tar-stream";
 import unzipper from "unzipper";
 import xz from "xz-decompress";
@@ -11,19 +12,28 @@ import xz from "xz-decompress";
 const tmpdir = os.tmpdir();
 const ZIG_VERSION = "0.13.0";
 const ZIG_EXECUTABLE_NAME = process.platform === "win32" ? "zig.exe" : "zig";
+const BIN_NAME = process.platform === "win32" ? "prettierxd.exe" : "prettierxd";
 
 build();
 
 async function build() {
   await downloadZig();
   console.log("Compiling prettierxd...");
-  spawn(
+  const cwd = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+  execFileSync(
     `${tmpdir}/${getZigArchiveName()}/${ZIG_EXECUTABLE_NAME}`,
     ["build", "run", "-Doptimize=ReleaseFast", "--summary", "all"],
     {
+      cwd,
       stdio: "inherit",
     },
   );
+
+  const src = path.join(cwd, "zig-out", "bin", BIN_NAME);
+  const dest = path.join(cwd, "bin", BIN_NAME);
+  await fs.copyFile(src, dest);
+
+  console.log(`Copied executable from ${src} to ${dest}`);
 }
 
 function getZigArchiveName() {

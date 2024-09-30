@@ -54,9 +54,10 @@ fn getSocketFilename(allocator: std.mem.Allocator) ![]const u8 {
         return socketFilename;
     }
 
-    const tmpDir = try std.process.getEnvVarOwned(allocator, "TMPDIR");
-    defer allocator.free(tmpDir);
+    var envMap = try std.process.getEnvMap(allocator);
+    defer envMap.deinit();
 
+    const tmpDir = envMap.get("TMPDIR") orelse "/tmp";
     const socketFilename = try std.fs.path.join(allocator, &.{ tmpDir, PRETTIERXD_SOCKET_FILENAME });
     return socketFilename;
 }
@@ -138,7 +139,7 @@ fn startPrettierDaemon(socketFilename: []const u8) !DaemonStream {
     std.log.debug("exec file: {s}", .{exec_file});
     defer gpa.allocator().free(exec_file);
 
-    const server_file = try std.fs.path.resolve(gpa.allocator(), &[_][]const u8{ exec_file, "../../index.js" });
+    const server_file = try std.fs.path.resolve(gpa.allocator(), &[_][]const u8{ exec_file, "../../index.mjs" });
     defer gpa.allocator().free(server_file);
     std.debug.assert(server_file.len > 0);
     std.log.debug("server file: {s}", .{server_file});
