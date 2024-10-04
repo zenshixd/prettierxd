@@ -4,11 +4,28 @@ const builtin = @import("builtin");
 const windows = std.os.windows;
 const posix = std.posix;
 
+var timer: std.time.Timer = undefined;
+
+const TOTAL_MEMORY_SIZE = 1024 * 32; // 32 KB, there is no way anyone will use more than that right????
 const PRETTIERXD_SOCKET_FILENAME = "prettierxd.sock";
 
+fn debugLog(comptime fmt: []const u8, args: anytype) void {
+    if (builtin.mode != .Debug) return;
+
+    const time = timer.read();
+    const stdout = std.io.getStdOut().writer();
+    stdout.writeAll("debug: ") catch @panic("failed to write to stdout");
+    std.fmt.format(stdout, fmt, args) catch @panic("failed to write to stdout");
+    const timeArgs = if (time < 1_000_000) .{ time / 1_000, "ns" } else .{ time / 1_000_000, "ms" };
+    std.fmt.format(stdout, " [{d}{s} elapsed]\n", timeArgs) catch @panic("failed to write to stdout");
+}
+
 pub fn main() !void {
-    var timer = DebugTimer.start();
-    const alloc_buffer = try std.heap.page_allocator.alloc(u8, 1024 * 32); // 32 KB
+    if (builtin.mode == .Debug) {
+        timer = std.time.Timer.start() catch unreachable;
+    }
+
+    const alloc_buffer = try std.heap.page_allocator.alloc(u8, TOTAL_MEMORY_SIZE);
     var gpa = std.heap.FixedBufferAllocator.init(alloc_buffer);
 
     const socketFilename = try getSocketFilename(gpa.allocator());
@@ -24,14 +41,14 @@ pub fn main() !void {
     const fullPath = if (!isAbsolute) try std.fs.cwd().realpathAlloc(gpa.allocator(), filename) else filename;
 
     const range = parseRangeArgs(&args);
-    std.log.debug("filename: {s}, range: {}", .{ fullPath, range });
+    debugLog("filename: {s}, range: {}", .{ fullPath, range });
 
     const stream = try connectToPrettierDaemon(gpa.allocator(), socketFilename);
     defer stream.close();
 
-    std.log.debug("connected, waiting for stdin", .{});
+    debugLog("connected, waiting for stdin", .{});
     const stdin = std.io.getStdIn();
-    std.log.debug("connected to socket in {d}ms", .{timer.read() / 1_000_000});
+    debugLog("connected to socket", .{});
 
     try stream.writeAll(fullPath);
     try stream.writeAll(&[_]u8{0});
@@ -39,13 +56,13 @@ pub fn main() !void {
     try stream.writeAll(",");
     try stream.writeAll(range.end);
     try stream.writeAll(&[_]u8{0});
-    try streamUntilEof(&timer, stdin.reader(), stream.writer());
+    try streamUntilEof(stdin.reader(), stream.writer());
     try stream.writeAll(&[_]u8{0});
 
-    std.log.debug("send in {d}ms, waiting for response", .{timer.read() / 1_000_000});
+    debugLog("waiting for response", .{});
     try stream.reader().streamUntilDelimiter(std.io.getStdOut().writer(), 0, null);
 
-    std.log.debug("done in {d}ms, memory left: {d}", .{ timer.read() / 1_000_000, alloc_buffer.len - gpa.end_index });
+    debugLog("memory left: {d:.2} / {d:.2}", .{ std.fmt.fmtIntSizeBin(alloc_buffer.len - gpa.end_index), std.fmt.fmtIntSizeBin(TOTAL_MEMORY_SIZE) });
 }
 
 fn getSocketFilename(gpa: std.mem.Allocator) ![]const u8 {
@@ -92,13 +109,13 @@ fn parseRangeArgs(args: *std.process.ArgIterator) Range {
     return range;
 }
 
-fn streamUntilEof(timer: *DebugTimer, source_reader: anytype, dest_writer: anytype) !void {
+fn streamUntilEof(source_reader: anytype, dest_writer: anytype) !void {
     var buf: [1024]u8 = undefined;
     const sourceLen = try source_reader.context.getEndPos();
     var readLen: usize = 0;
     while (true) {
         const read = try source_reader.read(&buf);
-        std.log.debug("read {d}, took {d}ms", .{ read, timer.read() / 1_000_000 });
+        debugLog("read {d}", .{read});
 
         try dest_writer.writeAll(buf[0..read]);
 
@@ -110,11 +127,11 @@ fn streamUntilEof(timer: *DebugTimer, source_reader: anytype, dest_writer: anyty
 pub const DaemonStream = if (builtin.os.tag == .windows) std.fs.File else std.net.Stream;
 
 fn connectToSocket(socketFilename: []const u8) anyerror!DaemonStream {
-    std.log.debug("connecting to socket {s}", .{socketFilename});
+    debugLog("connecting to socket {s}", .{socketFilename});
     return switch (builtin.os.tag) {
         .windows => try std.fs.createFileAbsolute(socketFilename, .{ .read = true }),
         .linux, .macos => std.net.connectUnixSocket(socketFilename),
-        else => @panic("unsupported os"),
+        else => @compileError("unsupported os"),
     };
 }
 
@@ -123,7 +140,7 @@ fn connectToPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !
         error.ConnectionRefused,
         error.FileNotFound,
         => {
-            std.log.debug("connection refused, restarting prettier daemon", .{});
+            debugLog("connection refused, restarting prettier daemon", .{});
             return startPrettierDaemon(gpa, socketFilename);
         },
         else => return err,
@@ -133,29 +150,29 @@ fn connectToPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !
 
 fn startPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !DaemonStream {
     const exec_file = try std.fs.selfExeDirPathAlloc(gpa);
-    std.log.debug("exec file: {s}", .{exec_file});
+    debugLog("exec file: {s}", .{exec_file});
 
     const server_file = try std.fs.path.resolve(gpa, &[_][]const u8{ exec_file, "../../index.js" });
     std.debug.assert(server_file.len > 0);
-    std.log.debug("server file: {s}", .{server_file});
+    debugLog("server file: {s}", .{server_file});
 
     try startProcess(gpa, .{
         .args = &[_][]const u8{ "node", server_file },
     });
 
-    std.log.debug("child process spawned", .{});
+    debugLog("child process spawned", .{});
     return try waitUntilDeamonReady(socketFilename);
 }
 
 fn waitUntilDeamonReady(socketFilename: []const u8) !DaemonStream {
-    std.log.debug("waiting for socket", .{});
+    debugLog("waiting for socket", .{});
     var stream: DaemonStream = undefined;
     while (true) {
         stream = connectToSocket(socketFilename) catch |err| switch (err) {
             error.ConnectionRefused,
             error.FileNotFound,
             => {
-                std.log.debug("error: {s}", .{@errorName(err)});
+                debugLog("error: {s}", .{@errorName(err)});
                 continue;
             },
             else => return err,
@@ -163,7 +180,7 @@ fn waitUntilDeamonReady(socketFilename: []const u8) !DaemonStream {
         break;
     }
 
-    std.log.debug("socket connected", .{});
+    debugLog("socket connected", .{});
     return stream;
 }
 
@@ -171,7 +188,7 @@ fn startProcess(allocator: std.mem.Allocator, params: StartProcess) !void {
     return switch (builtin.os.tag) {
         .windows => try startProcessWindows(allocator, params),
         .linux, .macos => try startProcessPosix(allocator, params),
-        else => @panic("unsupported os"),
+        else => @compileError("unsupported os"),
     };
 }
 
@@ -277,18 +294,3 @@ fn startProcessPosix(gpa: std.mem.Allocator, params: StartProcess) !void {
         return posix.execvpeZ(argvZ[0].?, argvZ.ptr, envp.ptr);
     }
 }
-
-pub const DebugTimer = struct {
-    timer: std.time.Timer = undefined,
-
-    pub fn start() DebugTimer {
-        return .{
-            .timer = if (builtin.mode == .Debug) std.time.Timer.start() catch unreachable else undefined,
-        };
-    }
-
-    pub fn read(self: *DebugTimer) u64 {
-        if (builtin.mode == .Debug) return self.timer.read();
-        return 0;
-    }
-};
