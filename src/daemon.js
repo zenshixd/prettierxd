@@ -55,8 +55,10 @@ export function startDaemon() {
         if (input.endsWith(END_MARKER)) {
           console.log("Formatting ", filepath);
           const config =
-            (await prettier.resolveConfig(filepath, { editorconfig: true })) ??
-            {};
+            (await prettier.resolveConfig(filepath, {
+              useCache: false,
+              editorconfig: true,
+            })) ?? {};
 
           config.filepath = filepath;
           if (rangeStart >= 0 && rangeEnd >= 0) {

@@ -7,33 +7,33 @@ const posix = std.posix;
 const PRETTIERXD_SOCKET_FILENAME = "prettierxd.sock";
 
 pub fn main() !void {
-    var timer = std.time.Timer.start() catch unreachable;
-
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    var timer = DebugTimer.start();
+    const alloc_buffer = try std.heap.page_allocator.alloc(u8, 1024 * 32); // 32 KB
+    var gpa = std.heap.FixedBufferAllocator.init(alloc_buffer);
 
     const socketFilename = try getSocketFilename(gpa.allocator());
-    defer gpa.allocator().free(socketFilename);
-
     var args = try std.process.argsWithAllocator(gpa.allocator());
-    defer args.deinit();
 
     _ = args.skip(); // skip executable name
     const filename = args.next() orelse {
         std.debug.print("No filename provided\n", .{});
         return;
     };
-    const range = parseRangeArgs(&args);
-    std.log.debug("filename: {s}, range: {}", .{ filename, range });
+    const isAbsolute = std.fs.path.isAbsolute(filename);
 
-    const stream = try connectToPrettierDaemon(socketFilename);
+    const fullPath = if (!isAbsolute) try std.fs.cwd().realpathAlloc(gpa.allocator(), filename) else filename;
+
+    const range = parseRangeArgs(&args);
+    std.log.debug("filename: {s}, range: {}", .{ fullPath, range });
+
+    const stream = try connectToPrettierDaemon(gpa.allocator(), socketFilename);
     defer stream.close();
 
     std.log.debug("connected, waiting for stdin", .{});
     const stdin = std.io.getStdIn();
     std.log.debug("connected to socket in {d}ms", .{timer.read() / 1_000_000});
 
-    try stream.writeAll(filename);
+    try stream.writeAll(fullPath);
     try stream.writeAll(&[_]u8{0});
     try stream.writeAll(range.start);
     try stream.writeAll(",");
@@ -45,20 +45,20 @@ pub fn main() !void {
     std.log.debug("send in {d}ms, waiting for response", .{timer.read() / 1_000_000});
     try stream.reader().streamUntilDelimiter(std.io.getStdOut().writer(), 0, null);
 
-    std.log.debug("done in {d}ms", .{timer.read() / 1_000_000});
+    std.log.debug("done in {d}ms, memory left: {d}", .{ timer.read() / 1_000_000, alloc_buffer.len - gpa.end_index });
 }
 
-fn getSocketFilename(allocator: std.mem.Allocator) ![]const u8 {
+fn getSocketFilename(gpa: std.mem.Allocator) ![]const u8 {
     if (builtin.os.tag == .windows) {
-        const socketFilename = try std.fs.path.join(allocator, &.{ "\\\\?\\pipe", PRETTIERXD_SOCKET_FILENAME });
+        const socketFilename = try std.fs.path.join(gpa, &.{ "\\\\?\\pipe", PRETTIERXD_SOCKET_FILENAME });
         return socketFilename;
     }
 
-    var envMap = try std.process.getEnvMap(allocator);
-    defer envMap.deinit();
+    var envMap = try std.process.getEnvMap(gpa);
 
     const tmpDir = envMap.get("TMPDIR") orelse "/tmp";
-    const socketFilename = try std.fs.path.join(allocator, &.{ tmpDir, PRETTIERXD_SOCKET_FILENAME });
+    const socketFilename = try std.fs.path.join(gpa, &.{ tmpDir, PRETTIERXD_SOCKET_FILENAME });
+
     return socketFilename;
 }
 
@@ -92,16 +92,18 @@ fn parseRangeArgs(args: *std.process.ArgIterator) Range {
     return range;
 }
 
-fn streamUntilEof(timer: *std.time.Timer, source_reader: anytype, dest_writer: anytype) !void {
+fn streamUntilEof(timer: *DebugTimer, source_reader: anytype, dest_writer: anytype) !void {
     var buf: [1024]u8 = undefined;
+    const sourceLen = try source_reader.context.getEndPos();
+    var readLen: usize = 0;
     while (true) {
         const read = try source_reader.read(&buf);
         std.log.debug("read {d}, took {d}ms", .{ read, timer.read() / 1_000_000 });
 
         try dest_writer.writeAll(buf[0..read]);
 
-        const isEof = try source_reader.context.getEndPos() == 0;
-        if (isEof) break;
+        readLen += read;
+        if (readLen >= sourceLen) break;
     }
 }
 
@@ -116,36 +118,28 @@ fn connectToSocket(socketFilename: []const u8) anyerror!DaemonStream {
     };
 }
 
-fn connectToPrettierDaemon(socketFilename: []const u8) !DaemonStream {
+fn connectToPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !DaemonStream {
     const stream = connectToSocket(socketFilename) catch |err| switch (err) {
         error.ConnectionRefused,
         error.FileNotFound,
         => {
             std.log.debug("connection refused, restarting prettier daemon", .{});
-            return startPrettierDaemon(socketFilename);
+            return startPrettierDaemon(gpa, socketFilename);
         },
         else => return err,
     };
     return stream;
 }
 
-fn startPrettierDaemon(socketFilename: []const u8) !DaemonStream {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-
-    std.fs.deleteFileAbsolute(socketFilename) catch |err| {
-        if (err != error.FileNotFound) return err;
-    };
-    const exec_file = try std.fs.selfExeDirPathAlloc(gpa.allocator());
+fn startPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !DaemonStream {
+    const exec_file = try std.fs.selfExeDirPathAlloc(gpa);
     std.log.debug("exec file: {s}", .{exec_file});
-    defer gpa.allocator().free(exec_file);
 
-    const server_file = try std.fs.path.resolve(gpa.allocator(), &[_][]const u8{ exec_file, "../../index.js" });
-    defer gpa.allocator().free(server_file);
+    const server_file = try std.fs.path.resolve(gpa, &[_][]const u8{ exec_file, "../../index.js" });
     std.debug.assert(server_file.len > 0);
     std.log.debug("server file: {s}", .{server_file});
 
-    try startProcess(gpa.allocator(), .{
+    try startProcess(gpa, .{
         .args = &[_][]const u8{ "node", server_file },
     });
 
@@ -190,7 +184,7 @@ pub const CreationFlags = struct {
     pub const CREATE_NEW_PROCESS_GROUP = 0x00000200;
 };
 
-fn startProcessWindows(allocator: std.mem.Allocator, params: StartProcess) !void {
+fn startProcessWindows(gpa: std.mem.Allocator, params: StartProcess) !void {
     var saAttr = windows.SECURITY_ATTRIBUTES{
         .nLength = @sizeOf(windows.SECURITY_ATTRIBUTES),
         .bInheritHandle = windows.TRUE,
@@ -236,11 +230,9 @@ fn startProcessWindows(allocator: std.mem.Allocator, params: StartProcess) !void
         .lpReserved2 = null,
     };
     var piProcInfo: windows.PROCESS_INFORMATION = undefined;
-    const cmdline = try std.mem.join(allocator, " ", params.args);
-    defer allocator.free(cmdline);
 
-    const cmdlineW = try std.unicode.utf8ToUtf16LeAllocZ(allocator, cmdline);
-    defer allocator.free(cmdlineW);
+    const cmdline = try std.mem.join(gpa, " ", params.args);
+    const cmdlineW = try std.unicode.utf8ToUtf16LeAllocZ(gpa, cmdline);
 
     return windows.CreateProcessW(
         null,
@@ -256,7 +248,7 @@ fn startProcessWindows(allocator: std.mem.Allocator, params: StartProcess) !void
     );
 }
 
-fn startProcessPosix(allocator: std.mem.Allocator, params: StartProcess) !void {
+fn startProcessPosix(gpa: std.mem.Allocator, params: StartProcess) !void {
     const dev_null_fd = posix.openZ("/dev/null", .{ .ACCMODE = .RDWR }, 0) catch |err| switch (err) {
         error.PathAlreadyExists => unreachable,
         error.NoSpaceLeft => unreachable,
@@ -269,13 +261,11 @@ fn startProcessPosix(allocator: std.mem.Allocator, params: StartProcess) !void {
         else => |e| return e,
     };
     defer posix.close(dev_null_fd);
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
 
-    const argvZ = try arena.allocator().allocSentinel(?[*:0]const u8, params.args.len, null);
-    for (params.args, 0..) |arg, i| argvZ[i] = (try arena.allocator().dupeZ(u8, arg)).ptr;
+    const argvZ = try gpa.allocSentinel(?[*:0]const u8, params.args.len, null);
+    for (params.args, 0..) |arg, i| argvZ[i] = (try gpa.dupeZ(u8, arg)).ptr;
 
-    const envp = try std.process.createEnvironFromExisting(arena.allocator(), @ptrCast(std.os.environ.ptr), .{});
+    const envp = try std.process.createEnvironFromExisting(gpa, @ptrCast(std.os.environ.ptr), .{});
 
     const pid_result = try posix.fork();
 
@@ -287,3 +277,18 @@ fn startProcessPosix(allocator: std.mem.Allocator, params: StartProcess) !void {
         return posix.execvpeZ(argvZ[0].?, argvZ.ptr, envp.ptr);
     }
 }
+
+pub const DebugTimer = struct {
+    timer: std.time.Timer = undefined,
+
+    pub fn start() DebugTimer {
+        return .{
+            .timer = if (builtin.mode == .Debug) std.time.Timer.start() catch unreachable else undefined,
+        };
+    }
+
+    pub fn read(self: *DebugTimer) u64 {
+        if (builtin.mode == .Debug) return self.timer.read();
+        return 0;
+    }
+};
