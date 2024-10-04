@@ -1,3 +1,3 @@
-import { startDaemon } from "./src/daemon.mjs";
+import { startDaemon } from "./src/daemon.js";
 
 startDaemon();

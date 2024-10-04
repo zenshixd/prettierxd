@@ -108,6 +108,7 @@ fn streamUntilEof(timer: *std.time.Timer, source_reader: anytype, dest_writer: a
 pub const DaemonStream = if (builtin.os.tag == .windows) std.fs.File else std.net.Stream;
 
 fn connectToSocket(socketFilename: []const u8) anyerror!DaemonStream {
+    std.log.debug("connecting to socket {s}", .{socketFilename});
     return switch (builtin.os.tag) {
         .windows => try std.fs.createFileAbsolute(socketFilename, .{ .read = true }),
         .linux, .macos => std.net.connectUnixSocket(socketFilename),
@@ -139,7 +140,7 @@ fn startPrettierDaemon(socketFilename: []const u8) !DaemonStream {
     std.log.debug("exec file: {s}", .{exec_file});
     defer gpa.allocator().free(exec_file);
 
-    const server_file = try std.fs.path.resolve(gpa.allocator(), &[_][]const u8{ exec_file, "../../index.mjs" });
+    const server_file = try std.fs.path.resolve(gpa.allocator(), &[_][]const u8{ exec_file, "../../index.js" });
     defer gpa.allocator().free(server_file);
     std.debug.assert(server_file.len > 0);
     std.log.debug("server file: {s}", .{server_file});
@@ -159,7 +160,10 @@ fn waitUntilDeamonReady(socketFilename: []const u8) !DaemonStream {
         stream = connectToSocket(socketFilename) catch |err| switch (err) {
             error.ConnectionRefused,
             error.FileNotFound,
-            => continue,
+            => {
+                std.log.debug("error: {s}", .{@errorName(err)});
+                continue;
+            },
             else => return err,
         };
         break;

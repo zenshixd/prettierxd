@@ -1,15 +1,16 @@
 {
   "name": "prettierxd",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "type": "module",
   "description": "Deamonified prettier with <5ms run time",
   "main": "index.js",
   "directories": {
-    "bin": "./bin"
+    "bin": "./zig-out/bin"
   },
   "scripts": {
-    "postinstall": "node scripts/postinstall.mjs",
-    "start": "node index.mjs",
+    "prepublishOnly": "node scripts/clean-bin.js",
+    "postinstall": "node scripts/postinstall.js",
+    "start": "node index.js",
     "test": "node --test"
   },
   "files": [

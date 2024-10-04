@@ -12,7 +12,6 @@ import xz from "xz-decompress";
 const tmpdir = os.tmpdir();
 const ZIG_VERSION = "0.13.0";
 const ZIG_EXECUTABLE_NAME = process.platform === "win32" ? "zig.exe" : "zig";
-const BIN_NAME = process.platform === "win32" ? "prettierxd.exe" : "prettierxd";
 
 build();
 
@@ -28,12 +27,6 @@ async function build() {
       stdio: "inherit",
     },
   );
-
-  const src = path.join(cwd, "zig-out", "bin", BIN_NAME);
-  const dest = path.join(cwd, "bin", BIN_NAME);
-  await fs.copyFile(src, dest);
-
-  console.log(`Copied executable from ${src} to ${dest}`);
 }
 
 function getZigArchiveName() {
