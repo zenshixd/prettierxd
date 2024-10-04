@@ -16,7 +16,8 @@ fn debugLog(comptime fmt: []const u8, args: anytype) void {
     const stdout = std.io.getStdOut().writer();
     stdout.writeAll("debug: ") catch @panic("failed to write to stdout");
     std.fmt.format(stdout, fmt, args) catch @panic("failed to write to stdout");
-    const timeArgs = if (time < 1_000_000) .{ time / 1_000, "ns" } else .{ time / 1_000_000, "ms" };
+    //const timeArgs = if (time < 1_000_000) .{ time / 1_000, "ns" } else .{ time / 1_000_000, "ms" };
+    const timeArgs = .{ time / 1_000, "ns" };
     std.fmt.format(stdout, " [{d}{s} elapsed]\n", timeArgs) catch @panic("failed to write to stdout");
 }
 
@@ -27,6 +28,7 @@ pub fn main() !void {
 
     const alloc_buffer = try std.heap.page_allocator.alloc(u8, TOTAL_MEMORY_SIZE);
     var gpa = std.heap.FixedBufferAllocator.init(alloc_buffer);
+    debugLog("allocated {d} buffer", .{std.fmt.fmtIntSizeBin(alloc_buffer.len)});
 
     const socketFilename = try getSocketFilename(gpa.allocator());
     var args = try std.process.argsWithAllocator(gpa.allocator());
@@ -36,12 +38,13 @@ pub fn main() !void {
         std.debug.print("No filename provided\n", .{});
         return;
     };
-    const isAbsolute = std.fs.path.isAbsolute(filename);
 
-    const fullPath = if (!isAbsolute) try std.fs.cwd().realpathAlloc(gpa.allocator(), filename) else filename;
+    debugLog("filename: {s}", .{filename});
+    const isAbsolute = std.fs.path.isAbsolute(filename);
+    const fullPath = if (!isAbsolute) try std.fs.path.resolve(gpa.allocator(), &.{ try std.process.getCwdAlloc(gpa.allocator()), filename }) else filename;
 
     const range = parseRangeArgs(&args);
-    debugLog("filename: {s}, range: {}", .{ fullPath, range });
+    debugLog("fullPath: {s}, range: {}", .{ fullPath, range });
 
     const stream = try connectToPrettierDaemon(gpa.allocator(), socketFilename);
     defer stream.close();
@@ -50,17 +53,18 @@ pub fn main() !void {
     const stdin = std.io.getStdIn();
     debugLog("connected to socket", .{});
 
+    const buf = try gpa.allocator().alloc(u8, 1024);
     try stream.writeAll(fullPath);
     try stream.writeAll(&[_]u8{0});
     try stream.writeAll(range.start);
     try stream.writeAll(",");
     try stream.writeAll(range.end);
     try stream.writeAll(&[_]u8{0});
-    try streamUntilEof(stdin.reader(), stream.writer());
+    try streamUntilEof(stdin.reader(), stream.writer(), buf);
     try stream.writeAll(&[_]u8{0});
 
     debugLog("waiting for response", .{});
-    try stream.reader().streamUntilDelimiter(std.io.getStdOut().writer(), 0, null);
+    try streamUntilDelimiter(stream.reader(), std.io.getStdOut().writer(), buf, 0);
 
     debugLog("memory left: {d:.2} / {d:.2}", .{ std.fmt.fmtIntSizeBin(alloc_buffer.len - gpa.end_index), std.fmt.fmtIntSizeBin(TOTAL_MEMORY_SIZE) });
 }
@@ -71,9 +75,7 @@ fn getSocketFilename(gpa: std.mem.Allocator) ![]const u8 {
         return socketFilename;
     }
 
-    var envMap = try std.process.getEnvMap(gpa);
-
-    const tmpDir = envMap.get("TMPDIR") orelse "/tmp";
+    const tmpDir = std.posix.getenv("TMPDIR") orelse "/tmp";
     const socketFilename = try std.fs.path.join(gpa, &.{ tmpDir, PRETTIERXD_SOCKET_FILENAME });
 
     return socketFilename;
@@ -109,18 +111,34 @@ fn parseRangeArgs(args: *std.process.ArgIterator) Range {
     return range;
 }
 
-fn streamUntilEof(source_reader: anytype, dest_writer: anytype) !void {
-    var buf: [1024]u8 = undefined;
+fn streamUntilEof(source_reader: anytype, dest_writer: anytype, buf: []u8) !void {
     const sourceLen = try source_reader.context.getEndPos();
     var readLen: usize = 0;
     while (true) {
-        const read = try source_reader.read(&buf);
+        const read = try source_reader.read(buf);
         debugLog("read {d}", .{read});
 
         try dest_writer.writeAll(buf[0..read]);
 
         readLen += read;
         if (readLen >= sourceLen) break;
+    }
+}
+
+fn streamUntilDelimiter(
+    source: anytype,
+    writer: anytype,
+    buf: []u8,
+    delimiter: u8,
+) anyerror!void {
+    while (true) {
+        const len = try source.read(buf);
+        debugLog("read {d}", .{len});
+        if (buf[len - 1] == delimiter) {
+            _ = try writer.write(buf[0 .. len - 1]);
+            return;
+        }
+        _ = try writer.write(buf[0..len]);
     }
 }
 
