@@ -1,6 +1,6 @@
 {
   "name": "prettierxd",
-  "version": "0.1.15",
+  "version": "0.1.17",
   "type": "module",
   "description": "Deamonified prettier with <5ms run time",
   "main": "index.js",

@@ -12,7 +12,6 @@ import xz from "xz-decompress";
 const tmpdir = os.tmpdir();
 const ZIG_VERSION = "0.13.0";
 const ZIG_EXECUTABLE_NAME = process.platform === "win32" ? "zig.exe" : "zig";
-
 build();
 
 async function build() {
@@ -27,6 +26,11 @@ async function build() {
       stdio: "inherit",
     },
   );
+
+  if (process.platform === "win32") {
+    console.log("We are on windows, we need to fix links ...");
+    await fixWindowsLinks(cwd);
+  }
 }
 
 function getZigArchiveName() {
@@ -126,4 +130,31 @@ async function unpackTarXz(response) {
   });
 
   await pipeline(new xz.XzReadableStream(response.body), extract);
+}
+
+const DEFAULT_LINKS = [
+  "prettierxd",
+  "prettierxd.cmd",
+  "prettierxd.ps1",
+  "prettierxd.exe",
+  "prettierxd.exe.cmd",
+  "prettierxd.exe.ps1",
+];
+async function fixWindowsLinks(cwd) {
+  const nodeDir =
+    process.env.npm_config_prefix ?? path.dirname(process.argv[0]);
+
+  // Remove existing links cause they suck
+  const files = await fs.readdir(nodeDir);
+  for (const file of files) {
+    if (DEFAULT_LINKS.includes(file)) {
+      await fs.unlink(path.join(nodeDir, file));
+    }
+  }
+
+  await fs.copyFile(
+    path.join(cwd, "zig-out", "bin", "prettierxd.exe"),
+    path.join(nodeDir, "prettierxd.exe"),
+  );
+  console.log("Copied binary to PATH");
 }
