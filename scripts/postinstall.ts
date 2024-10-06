@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import assert from "node:assert";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
@@ -36,8 +36,8 @@ async function build() {
 function getZigArchiveName() {
   const { arch, platform } = process;
 
-  let zigPlatformVariant;
-  let zigArchVariant;
+  let zigPlatformVariant: "windows" | "linux" | "macos";
+  let zigArchVariant: "x86" | "x86_64" | "aarch64";
 
   switch (platform) {
     case "darwin":
@@ -90,8 +90,8 @@ async function downloadZig() {
   }
 }
 
-async function unpackZip(response) {
-  const size = parseInt(response.headers.get("content-length"));
+async function unpackZip(response: Response) {
+  const size = parseInt(response.headers.get("content-length") ?? "");
   assert.ok(size > 0, "Invalid zip file");
 
   const source = await unzipper.Open.buffer(
@@ -110,7 +110,7 @@ async function unpackZip(response) {
   }
 }
 
-async function unpackTarXz(response) {
+async function unpackTarXz(response: Response) {
   console.log(`Extracting zig compiler to ${tmpdir}...`);
   const extract = tar.extract();
 
@@ -129,7 +129,7 @@ async function unpackTarXz(response) {
     }
   });
 
-  await pipeline(new xz.XzReadableStream(response.body), extract);
+  await pipeline(new xz.XzReadableStream(response.body!), extract);
 }
 
 const DEFAULT_LINKS = [
@@ -140,7 +140,7 @@ const DEFAULT_LINKS = [
   "prettierxd.exe.cmd",
   "prettierxd.exe.ps1",
 ];
-async function fixWindowsLinks(cwd) {
+async function fixWindowsLinks(cwd: string) {
   const nodeDir =
     process.env.npm_config_prefix ?? path.dirname(process.argv[0]);
 

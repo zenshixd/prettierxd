@@ -9,18 +9,6 @@ var timer: std.time.Timer = undefined;
 const TOTAL_MEMORY_SIZE = 1024 * 32; // 32 KB, there is no way anyone will use more than that right????
 const PRETTIERXD_SOCKET_FILENAME = "prettierxd.sock";
 
-fn debugLog(comptime fmt: []const u8, args: anytype) void {
-    if (builtin.mode != .Debug) return;
-
-    const time = timer.read();
-    const stdout = std.io.getStdOut().writer();
-    stdout.writeAll("debug: ") catch @panic("failed to write to stdout");
-    std.fmt.format(stdout, fmt, args) catch @panic("failed to write to stdout");
-    //const timeArgs = if (time < 1_000_000) .{ time / 1_000, "ns" } else .{ time / 1_000_000, "ms" };
-    const timeArgs = .{ time / 1_000, "ns" };
-    std.fmt.format(stdout, " [{d}{s} elapsed]\n", timeArgs) catch @panic("failed to write to stdout");
-}
-
 pub fn main() !void {
     if (builtin.mode == .Debug) {
         timer = std.time.Timer.start() catch unreachable;
@@ -69,16 +57,16 @@ pub fn main() !void {
     debugLog("memory left: {d:.2} / {d:.2}", .{ std.fmt.fmtIntSizeBin(alloc_buffer.len - gpa.end_index), std.fmt.fmtIntSizeBin(TOTAL_MEMORY_SIZE) });
 }
 
-fn getSocketFilename(gpa: std.mem.Allocator) ![]const u8 {
-    if (builtin.os.tag == .windows) {
-        const socketFilename = try std.fs.path.join(gpa, &.{ "\\\\?\\pipe", PRETTIERXD_SOCKET_FILENAME });
-        return socketFilename;
-    }
+fn debugLog(comptime fmt: []const u8, args: anytype) void {
+    if (builtin.mode != .Debug) return;
 
-    const tmpDir = std.posix.getenv("TMPDIR") orelse "/tmp";
-    const socketFilename = try std.fs.path.join(gpa, &.{ tmpDir, PRETTIERXD_SOCKET_FILENAME });
-
-    return socketFilename;
+    const time = timer.read();
+    const stdout = std.io.getStdOut().writer();
+    stdout.writeAll("debug: ") catch @panic("failed to write to stdout");
+    std.fmt.format(stdout, fmt, args) catch @panic("failed to write to stdout");
+    //const timeArgs = if (time < 1_000_000) .{ time / 1_000, "ns" } else .{ time / 1_000_000, "ms" };
+    const timeArgs = .{ time / 1_000, "μs" };
+    std.fmt.format(stdout, " [{d}{s} elapsed]\n", timeArgs) catch @panic("failed to write to stdout");
 }
 
 const Range = struct {
@@ -134,6 +122,7 @@ fn streamUntilDelimiter(
     while (true) {
         const len = try source.read(buf);
         debugLog("read {d}", .{len});
+        if (len == 0) return;
         if (buf[len - 1] == delimiter) {
             _ = try writer.write(buf[0 .. len - 1]);
             return;
@@ -142,16 +131,19 @@ fn streamUntilDelimiter(
     }
 }
 
-pub const DaemonStream = if (builtin.os.tag == .windows) std.fs.File else std.net.Stream;
+fn getSocketFilename(gpa: std.mem.Allocator) ![]const u8 {
+    if (builtin.os.tag == .windows) {
+        const socketFilename = try std.fs.path.join(gpa, &.{ "\\\\?\\pipe", PRETTIERXD_SOCKET_FILENAME });
+        return socketFilename;
+    }
 
-fn connectToSocket(socketFilename: []const u8) anyerror!DaemonStream {
-    debugLog("connecting to socket {s}", .{socketFilename});
-    return switch (builtin.os.tag) {
-        .windows => try std.fs.createFileAbsolute(socketFilename, .{ .read = true }),
-        .linux, .macos => std.net.connectUnixSocket(socketFilename),
-        else => @compileError("unsupported os"),
-    };
+    const tmpDir = std.posix.getenv("TMPDIR") orelse "/tmp";
+    const socketFilename = try std.fs.path.join(gpa, &.{ tmpDir, PRETTIERXD_SOCKET_FILENAME });
+
+    return socketFilename;
 }
+
+pub const DaemonStream = if (builtin.os.tag == .windows) std.fs.File else std.net.Stream;
 
 fn connectToPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !DaemonStream {
     const stream = connectToSocket(socketFilename) catch |err| switch (err) {
@@ -164,6 +156,15 @@ fn connectToPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !
         else => return err,
     };
     return stream;
+}
+
+fn connectToSocket(socketFilename: []const u8) anyerror!DaemonStream {
+    debugLog("connecting to socket {s}", .{socketFilename});
+    return switch (builtin.os.tag) {
+        .windows => try std.fs.createFileAbsolute(socketFilename, .{ .read = true }),
+        .linux, .macos => std.net.connectUnixSocket(socketFilename),
+        else => @compileError("unsupported os"),
+    };
 }
 
 fn startPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !DaemonStream {
@@ -305,6 +306,7 @@ fn startProcessPosix(gpa: std.mem.Allocator, params: StartProcess) !void {
     const pid_result = try posix.fork();
 
     if (pid_result == 0) {
+        _ = std.os.linux.setsid();
         try posix.dup2(dev_null_fd, posix.STDIN_FILENO);
         try posix.dup2(dev_null_fd, posix.STDOUT_FILENO);
         try posix.dup2(dev_null_fd, posix.STDERR_FILENO);
