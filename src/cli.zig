@@ -6,7 +6,7 @@ const posix = std.posix;
 
 var timer: std.time.Timer = undefined;
 
-const TOTAL_MEMORY_SIZE = 1024 * 32; // 32 KB, there is no way anyone will use more than that right????
+const TOTAL_MEMORY_SIZE = 1024 * 12; // hard limit of 4 KB
 const PRETTIERXD_SOCKET_FILENAME = "prettierxd.sock";
 
 pub fn main() !void {
@@ -14,8 +14,8 @@ pub fn main() !void {
         timer = std.time.Timer.start() catch unreachable;
     }
 
-    const alloc_buffer = try std.heap.page_allocator.alloc(u8, TOTAL_MEMORY_SIZE);
-    var gpa = std.heap.FixedBufferAllocator.init(alloc_buffer);
+    var alloc_buffer: [TOTAL_MEMORY_SIZE]u8 = undefined;
+    var gpa = std.heap.FixedBufferAllocator.init(&alloc_buffer);
     debugLog("allocated {d} buffer", .{std.fmt.fmtIntSizeBin(alloc_buffer.len)});
 
     const socketFilename = try getSocketFilename(gpa.allocator());
@@ -192,6 +192,7 @@ fn waitUntilDeamonReady(socketFilename: []const u8) !DaemonStream {
             error.FileNotFound,
             => {
                 debugLog("error: {s}", .{@errorName(err)});
+                if (builtin.mode == .Debug) std.time.sleep(std.time.ns_per_ms * 1000);
                 continue;
             },
             else => return err,
@@ -215,10 +216,7 @@ pub const StartProcess = struct {
     args: []const []const u8,
 };
 
-pub const CreationFlags = struct {
-    pub const DETACHED_PROCESS = 0x00000008;
-    pub const CREATE_NEW_PROCESS_GROUP = 0x00000200;
-};
+pub const DETACHED_PROCESS = 0x00000008;
 
 fn startProcessWindows(gpa: std.mem.Allocator, params: StartProcess) !void {
     var saAttr = windows.SECURITY_ATTRIBUTES{
@@ -276,7 +274,7 @@ fn startProcessWindows(gpa: std.mem.Allocator, params: StartProcess) !void {
         null,
         null,
         windows.TRUE,
-        windows.CREATE_UNICODE_ENVIRONMENT | CreationFlags.DETACHED_PROCESS,
+        windows.CREATE_UNICODE_ENVIRONMENT | DETACHED_PROCESS,
         null,
         null,
         &siStartInfo,

@@ -15,13 +15,19 @@ export const SOCKET_FILENAME = path.join(
 
 let timeStart: bigint;
 
+let logFile = await fs.open(path.join(TMP_DIR, "prettierxd.log"), "w+");
+
+let logPromise: Promise<void> = Promise.resolve();
+
 const log = (...args: any[]) => {
   if (process.argv.includes("--debug")) {
     return console.log(
       ...args,
-      timeStart ? `[${readTime() / 1000n}μs elapsed]` : "",
+      `[${readTime() / 1000n}μs elapsed]`,
     );
   }
+
+  logPromise = logPromise.then(() => logFile.writeFile(args.join(" ") + `[${readTime() / 1000n}μs elapsed]` + "\n"));
 };
 
 const logError = (...args: any[]) => log("error:", ...args);
@@ -49,6 +55,7 @@ export async function startDaemon() {
 }
 
 function readTime() {
+  if (timeStart == null) return 0n;
   return process.hrtime.bigint() - timeStart;
 }
 

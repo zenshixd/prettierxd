@@ -15,12 +15,13 @@ const ZIG_EXECUTABLE_NAME = process.platform === "win32" ? "zig.exe" : "zig";
 build();
 
 async function build() {
+  const isDebug = process.argv.includes("--debug");
   await downloadZig();
   console.log("Compiling prettierxd...");
   const cwd = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
   execFileSync(
     `${tmpdir}/${getZigArchiveName()}/${ZIG_EXECUTABLE_NAME}`,
-    ["build", "run", "-Doptimize=ReleaseFast", "--summary", "all"],
+    ["build", "run", isDebug ? "-Doptimize=Debug" : "-Doptimize=ReleaseFast", "--summary", "all"],
     {
       cwd,
       stdio: "inherit",
