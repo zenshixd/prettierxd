@@ -171,12 +171,15 @@ fn startPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !Daem
     const exec_file = try std.fs.selfExeDirPathAlloc(gpa);
     debugLog("exec file: {s}", .{exec_file});
 
-    const server_file = try std.fs.path.resolve(gpa, &[_][]const u8{ exec_file, "../../index.js" });
-    std.debug.assert(server_file.len > 0);
+    // We test for zig-out, because on Windows linking is different
+    // On Windows linking is fucked, so we just copy the exec next to node.exe
+    // On Linux/Mac Nodejs is simlinking as usual which means exeDirPath() points to exec in zig-out
+    const daemonFile = if (std.mem.indexOf(u8, exec_file, "zig-out")) |_| "../../index.js" else "node_modules/prettierxd/index.js";
+    const server_file = try std.fs.path.resolve(gpa, &[_][]const u8{ exec_file, daemonFile });
     debugLog("server file: {s}", .{server_file});
 
     try startProcess(gpa, .{
-        .args = &[_][]const u8{ "node", server_file },
+        .args = &[_][]const u8{ "node", server_file, if (builtin.mode == .Debug) "--debug" else "" },
     });
 
     debugLog("child process spawned", .{});
@@ -244,9 +247,9 @@ fn startProcessWindows(gpa: std.mem.Allocator, params: StartProcess) !void {
 
     var siStartInfo = windows.STARTUPINFOW{
         .cb = @sizeOf(windows.STARTUPINFOW),
-        .hStdError = null_pipe,
-        .hStdOutput = null_pipe,
-        .hStdInput = null_pipe,
+        .hStdError = if (builtin.mode == .Debug) try windows.GetStdHandle(windows.STD_ERROR_HANDLE) else null_pipe,
+        .hStdOutput = if (builtin.mode == .Debug) try windows.GetStdHandle(windows.STD_OUTPUT_HANDLE) else null_pipe,
+        .hStdInput = if (builtin.mode == .Debug) try windows.GetStdHandle(windows.STD_INPUT_HANDLE) else null_pipe,
         .dwFlags = windows.STARTF_USESTDHANDLES,
 
         .lpReserved = null,
@@ -274,7 +277,7 @@ fn startProcessWindows(gpa: std.mem.Allocator, params: StartProcess) !void {
         null,
         null,
         windows.TRUE,
-        windows.CREATE_UNICODE_ENVIRONMENT | DETACHED_PROCESS,
+        if (builtin.mode == .Debug) windows.CREATE_UNICODE_ENVIRONMENT else windows.CREATE_UNICODE_ENVIRONMENT | DETACHED_PROCESS,
         null,
         null,
         &siStartInfo,
