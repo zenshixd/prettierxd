@@ -1,62 +1,29 @@
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
-import fs from "node:fs/promises";
 import { createRequire } from "node:module";
-import type prettierModule from "prettier";
+import type Prettier from "prettier";
 import { delayShutdown } from "./shutdown.js";
-
-const TMP_DIR = os.tmpdir();
+import { saveDaemonPid, killOtherDaemons } from "./singleton.js";
+import { log } from "./log.js";
 
 export const SOCKET_FILENAME = path.join(
-  process.platform === "win32" ? "\\\\?\\pipe" : TMP_DIR,
+  process.platform === "win32" ? "\\\\?\\pipe" : os.tmpdir(),
   "prettierxd.sock",
 );
 
-let timeStart: bigint;
-
-let logFile = await fs.open(path.join(TMP_DIR, "prettierxd.log"), "w+");
-
-let logPromise: Promise<void> = Promise.resolve();
-
-const log = (...args: any[]) => {
-  if (process.argv.includes("--debug")) {
-    return console.log(
-      ...args,
-      `[${readTime() / 1000n}μs elapsed]`,
-    );
-  }
-
-  logPromise = logPromise.then(() => logFile.writeFile(args.join(" ") + `[${readTime() / 1000n}μs elapsed]` + "\n"));
-};
-
-const logError = (...args: any[]) => log("error:", ...args);
-
 export async function startDaemon() {
-  try {
-    try {
-      await fs.unlink(SOCKET_FILENAME);
-    } catch (e) {
-      logError("error removing socket file", e);
-      if ((e as any).code !== "ENOENT") throw e;
-    }
-    const server = net
-      .createServer()
-      .listen(SOCKET_FILENAME, () => log(`Listening at ${SOCKET_FILENAME}`));
+  await killOtherDaemons();
+  const server = net.createServer().listen(SOCKET_FILENAME, async () => {
+    await saveDaemonPid();
+    return log(`Listening at ${SOCKET_FILENAME}`);
+  });
 
-    server.on("connection", handler);
+  server.on("connection", handler);
 
-    return () => {
-      server.close();
-    };
-  } catch (e) {
-    logError("error starting daemon", e);
-  }
-}
-
-function readTime() {
-  if (timeStart == null) return 0n;
-  return process.hrtime.bigint() - timeStart;
+  return () => {
+    server.close();
+  };
 }
 
 enum Parsing {
@@ -75,7 +42,6 @@ interface State {
 const END_MARKER = "\0";
 function handler(socket: net.Socket) {
   delayShutdown();
-  timeStart = process.hrtime.bigint();
   log("handler: new");
   let state: State = {
     parsing: Parsing.Filepath,
@@ -139,6 +105,17 @@ function handler(socket: net.Socket) {
 
     if (doneParsing) {
       const prettier = resolvePrettier(state.filepath);
+      const fileInfo = await prettier.getFileInfo(state.filepath, {
+        ignorePath: ".prettierignore",
+        resolveConfig: false,
+      });
+      if (fileInfo.ignored) {
+        log("handler: ignored");
+        socket.write(state.input + END_MARKER);
+        socket.end();
+        return;
+      }
+
       const config = await resolveConfig(prettier, state.filepath);
 
       config.filepath = state.filepath;
@@ -170,10 +147,10 @@ function handler(socket: net.Socket) {
   });
 }
 
-const moduleCache = new Map<string, typeof prettierModule>();
+const moduleCache = new Map<string, typeof Prettier>();
 const require = createRequire(import.meta.url);
 
-function resolvePrettier(filePath: string) {
+function resolvePrettier(filePath: string): typeof Prettier {
   if (moduleCache.has(filePath)) {
     log("resolvePrettier: cache hit");
     return moduleCache.get(filePath)!;
@@ -190,10 +167,7 @@ function resolvePrettier(filePath: string) {
 const configFileCache = new Map<string, string | null>();
 const configCache = new Map<string, Record<string, any>>();
 
-async function resolveConfig(
-  prettier: typeof prettierModule,
-  filePath: string,
-) {
+async function resolveConfig(prettier: typeof Prettier, filePath: string) {
   log("resolveConfig");
   let configFile;
   if (configFileCache.has(filePath)) {
@@ -202,7 +176,7 @@ async function resolveConfig(
   } else {
     log("resolveConfig: config file cache miss");
     configFile = await prettier.resolveConfigFile(filePath);
-    //configFileCache.set(filePath, configFile);
+    configFileCache.set(filePath, configFile);
   }
 
   log("resolveConfig: file", configFile);

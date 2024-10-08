@@ -1,12 +1,14 @@
+import { removePidFile } from "./singleton.js";
+
 const TIMEOUT = 30 * 60 * 1000;
 
-let timer = setTimeout(() => {
+const exit = async () => {
+  await removePidFile();
   process.exit(0);
-}, TIMEOUT);
+};
+let timer = setTimeout(exit, TIMEOUT);
 
 export const delayShutdown = () => {
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    process.exit(0);
-  }, TIMEOUT);
+  timer = setTimeout(exit, TIMEOUT);
 };
