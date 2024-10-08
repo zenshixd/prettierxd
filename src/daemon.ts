@@ -1,16 +1,13 @@
 import net from "node:net";
-import path from "node:path";
-import os from "node:os";
 import { createRequire } from "node:module";
 import type Prettier from "prettier";
 import { delayShutdown } from "./shutdown.js";
-import { saveDaemonPid, killOtherDaemons } from "./singleton.js";
-import { log } from "./log.js";
-
-export const SOCKET_FILENAME = path.join(
-  process.platform === "win32" ? "\\\\?\\pipe" : os.tmpdir(),
-  "prettierxd.sock",
-);
+import {
+  saveDaemonPid,
+  killOtherDaemons,
+  SOCKET_FILENAME,
+} from "./singleton.js";
+import { log, resetTime } from "./log.js";
 
 export async function startDaemon() {
   await killOtherDaemons();
@@ -41,6 +38,7 @@ interface State {
 
 const END_MARKER = "\0";
 function handler(socket: net.Socket) {
+  resetTime();
   delayShutdown();
   log("handler: new");
   let state: State = {

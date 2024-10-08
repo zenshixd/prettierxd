@@ -30,3 +30,6 @@ export function readTime() {
   }
   return process.hrtime.bigint() - timeStart;
 }
+export function resetTime() {
+  timeStart = process.hrtime.bigint();
+}

@@ -169,7 +169,7 @@ fn connectToSocket(socketFilename: []const u8) anyerror!DaemonStream {
 
 fn startPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !DaemonStream {
     const exec_file = try std.fs.selfExeDirPathAlloc(gpa);
-    debugLog("exec file: {s}", .{exec_file});
+    debugLog("exec file dir: {s}", .{exec_file});
 
     // We test for zig-out, because on Windows linking is different
     // On Windows linking is fucked, so we just copy the exec next to node.exe
@@ -177,9 +177,10 @@ fn startPrettierDaemon(gpa: std.mem.Allocator, socketFilename: []const u8) !Daem
     const daemonFile = if (std.mem.indexOf(u8, exec_file, "zig-out")) |_| "../../index.js" else "node_modules/prettierxd/index.js";
     const server_file = try std.fs.path.resolve(gpa, &[_][]const u8{ exec_file, daemonFile });
     debugLog("server file: {s}", .{server_file});
+    const args = .{ "node", server_file } ++ if (builtin.mode == .Debug) .{} else .{"--debug"};
 
     try startProcess(gpa, .{
-        .args = &[_][]const u8{ "node", server_file, if (builtin.mode == .Debug) "--debug" else "" },
+        .args = &args,
     });
 
     debugLog("child process spawned", .{});
@@ -208,6 +209,7 @@ fn waitUntilDeamonReady(socketFilename: []const u8) !DaemonStream {
 }
 
 fn startProcess(allocator: std.mem.Allocator, params: StartProcess) !void {
+    debugLog("startProcess, cwd: {s}", .{try std.process.getCwdAlloc(allocator)});
     return switch (builtin.os.tag) {
         .windows => try startProcessWindows(allocator, params),
         .linux, .macos => try startProcessPosix(allocator, params),
@@ -307,10 +309,15 @@ fn startProcessPosix(gpa: std.mem.Allocator, params: StartProcess) !void {
     const pid_result = try posix.fork();
 
     if (pid_result == 0) {
-        _ = std.os.linux.setsid();
-        try posix.dup2(dev_null_fd, posix.STDIN_FILENO);
-        try posix.dup2(dev_null_fd, posix.STDOUT_FILENO);
-        try posix.dup2(dev_null_fd, posix.STDERR_FILENO);
+        if (builtin.mode != .Debug) {
+            // Only Linux has setsid (and only Linux needs it, Mac is fine without it)
+            if (builtin.os.tag == .linux) {
+                _ = std.os.linux.setsid();
+            }
+            try posix.dup2(dev_null_fd, posix.STDIN_FILENO);
+            try posix.dup2(dev_null_fd, posix.STDOUT_FILENO);
+            try posix.dup2(dev_null_fd, posix.STDERR_FILENO);
+        }
 
         return posix.execvpeZ(argvZ[0].?, argvZ.ptr, envp.ptr);
     }
