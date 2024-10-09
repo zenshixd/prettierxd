@@ -16,33 +16,71 @@ export async function saveDaemonPid() {
 
 export async function killOtherDaemons() {
   log("killOtherDaemons");
-  try {
-    const pid = parseInt(await readFile(PID_FILE, "utf-8"));
+  const pid = await readPidFile();
+  if (pid != null) {
     if (pid == process.pid) {
       log("killOtherDaemons: already running");
       return;
     }
 
     log("killOtherDaemons: killing", pid);
-    process.kill(pid, "SIGTERM");
-  } catch (e) {
-    log("killOtherDaemons: error", e);
-    if ((e as any).code !== "ENOENT" && (e as any).code !== "ESRCH") throw e;
+    const killResult = killProcess(pid);
+    if (!killResult) {
+      log("killOtherDaemons: process not found");
+    }
+  } else {
+    log("killOtherDaemons: no pid file");
   }
 
   // on Linux/Mac also remove the unix socket file
   if (process.platform !== "win32") {
-    try {
-      log("killOtherDaemons: removing socket file");
-      await unlink(SOCKET_FILENAME);
-    } catch (e) {
-      log("killOtherDaemons: removing socket file error", e);
-      if ((e as any).code !== "ENOENT") throw e;
+    log("killOtherDaemons: removing socket file");
+    const removed = await unlinkFile(SOCKET_FILENAME);
+    if (!removed) {
+      log("killOtherDaemons: socket file not found");
     }
+  }
+}
+
+async function readPidFile() {
+  try {
+    return parseInt(await readFile(PID_FILE, "utf-8"));
+  } catch (e) {
+    if ((e as any).code === "ENOENT") {
+      return null;
+    }
+
+    throw e;
+  }
+}
+
+function killProcess(pid: number) {
+  try {
+    process.kill(pid, "SIGTERM");
+    return true;
+  } catch (e) {
+    if ((e as any).code === "ESRCH") {
+      return false;
+    }
+
+    throw e;
+  }
+}
+
+export async function unlinkFile(file: string) {
+  try {
+    await unlink(file);
+    return true;
+  } catch (e) {
+    if ((e as any).code === "ENOENT") {
+      return false;
+    }
+
+    throw e;
   }
 }
 
 export async function removePidFile() {
   log("removePidFile");
-  await unlink(PID_FILE);
+  await unlinkFile(PID_FILE);
 }

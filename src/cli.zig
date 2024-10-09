@@ -1,5 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const simargs = @import("simargs");
+const package = @import("package");
 
 const windows = std.os.windows;
 const posix = std.posix;
@@ -8,6 +10,13 @@ var timer: std.time.Timer = undefined;
 
 const TOTAL_MEMORY_SIZE = 1024 * 12; // hard limit of 4 KB
 const PRETTIERXD_SOCKET_FILENAME = "prettierxd.sock";
+
+pub const CliArgs = struct {
+    @"range-start": i32 = -1,
+    @"range-end": i32 = -1,
+    ignorePath: []const u8 = ".prettierignore",
+    version: bool = false,
+};
 
 pub fn main() !void {
     if (builtin.mode == .Debug) {
@@ -18,20 +27,22 @@ pub fn main() !void {
     var gpa = std.heap.FixedBufferAllocator.init(&alloc_buffer);
     debugLog("allocated {d} buffer", .{std.fmt.fmtIntSizeBin(alloc_buffer.len)});
 
-    const socketFilename = try getSocketFilename(gpa.allocator());
-    var args = try std.process.argsWithAllocator(gpa.allocator());
-
-    _ = args.skip(); // skip executable name
-    const filename = args.next() orelse {
+    const cli = try simargs.parse(gpa.allocator(), CliArgs, null, package.version);
+    if (cli.positional_args.len == 0) {
         std.debug.print("No filename provided\n", .{});
         return;
-    };
+    }
 
+    const socketFilename = try getSocketFilename(gpa.allocator());
+    const filename = cli.positional_args[0];
     debugLog("filename: {s}", .{filename});
     const isAbsolute = std.fs.path.isAbsolute(filename);
     const fullPath = if (!isAbsolute) try std.fs.path.resolve(gpa.allocator(), &.{ try std.process.getCwdAlloc(gpa.allocator()), filename }) else filename;
 
-    const range = parseRangeArgs(&args);
+    const range = .{
+        .start = cli.args.@"range-start",
+        .end = cli.args.@"range-end",
+    };
     debugLog("fullPath: {s}, range: {}", .{ fullPath, range });
 
     const stream = try connectToPrettierDaemon(gpa.allocator(), socketFilename);
@@ -43,13 +54,13 @@ pub fn main() !void {
 
     const buf = try gpa.allocator().alloc(u8, 1024);
     try stream.writeAll(fullPath);
-    try stream.writeAll(&[_]u8{0});
-    try stream.writeAll(range.start);
-    try stream.writeAll(",");
-    try stream.writeAll(range.end);
-    try stream.writeAll(&[_]u8{0});
+    try stream.writeAll(&.{0});
+    try std.fmt.format(stream.writer(), "{d},{d}", .{ range.start, range.end });
+    try stream.writeAll(&.{0});
+    try stream.writeAll(cli.args.ignorePath);
+    try stream.writeAll(&.{0});
     try streamUntilEof(stdin.reader(), stream.writer(), buf);
-    try stream.writeAll(&[_]u8{0});
+    try stream.writeAll(&.{0});
 
     debugLog("waiting for response", .{});
     try streamUntilDelimiter(stream.reader(), std.io.getStdOut().writer(), buf, 0);
@@ -67,36 +78,6 @@ fn debugLog(comptime fmt: []const u8, args: anytype) void {
     //const timeArgs = if (time < 1_000_000) .{ time / 1_000, "ns" } else .{ time / 1_000_000, "ms" };
     const timeArgs = .{ time / 1_000, "μs" };
     std.fmt.format(stdout, " [{d}{s} elapsed]\n", timeArgs) catch @panic("failed to write to stdout");
-}
-
-const Range = struct {
-    start: []const u8 = "-1",
-    end: []const u8 = "-1",
-};
-
-fn parseRangeArgs(args: *std.process.ArgIterator) Range {
-    var range = Range{};
-
-    var arg = args.next();
-    if (arg == null) return range;
-
-    const matchers = .{
-        .{ "--range-start", "start" },
-        .{ "--range-end", "end" },
-    };
-    inline for (matchers) |kv| {
-        var split_iter = std.mem.splitScalar(u8, arg.?, '=');
-        if (std.mem.eql(u8, split_iter.next().?, kv[0])) {
-            @field(range, kv[1]) = split_iter.next() orelse {
-                std.debug.print("No value provided for {s}\n", .{kv[0]});
-                return range;
-            };
-
-            arg = args.next() orelse return range;
-        }
-    }
-
-    return range;
 }
 
 fn streamUntilEof(source_reader: anytype, dest_writer: anytype, buf: []u8) !void {

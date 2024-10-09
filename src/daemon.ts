@@ -26,6 +26,7 @@ export async function startDaemon() {
 enum Parsing {
   Filepath,
   Range,
+  IgnorePath,
   Input,
 }
 
@@ -33,6 +34,7 @@ interface State {
   parsing: Parsing;
   filepath: string;
   range: string;
+  ignorePath: string;
   input: string;
 }
 
@@ -45,6 +47,7 @@ function handler(socket: net.Socket) {
     parsing: Parsing.Filepath,
     filepath: "",
     range: "",
+    ignorePath: "",
     input: "",
   };
 
@@ -69,6 +72,19 @@ function handler(socket: net.Socket) {
     }
 
     state.range += data.slice(0, endMarkerIndex);
+    state.parsing = Parsing.IgnorePath;
+
+    return parseIgnorePath(data.slice(endMarkerIndex + END_MARKER.length));
+  };
+
+  const parseIgnorePath = (data: string): boolean => {
+    const endMarkerIndex = data.indexOf(END_MARKER);
+    if (endMarkerIndex == -1) {
+      state.ignorePath += data;
+      return false;
+    }
+
+    state.ignorePath += data.slice(0, endMarkerIndex);
     state.parsing = Parsing.Input;
 
     return parseInput(data.slice(endMarkerIndex + END_MARKER.length));
@@ -96,6 +112,9 @@ function handler(socket: net.Socket) {
       case Parsing.Range:
         doneParsing = parseRange(data.toString());
         break;
+      case Parsing.IgnorePath:
+        doneParsing = parseIgnorePath(data.toString());
+        break;
       case Parsing.Input:
         doneParsing = parseInput(data.toString());
         break;
@@ -104,7 +123,7 @@ function handler(socket: net.Socket) {
     if (doneParsing) {
       const prettier = resolvePrettier(state.filepath);
       const fileInfo = await prettier.getFileInfo(state.filepath, {
-        ignorePath: ".prettierignore",
+        ignorePath: state.ignorePath,
         resolveConfig: false,
       });
       if (fileInfo.ignored) {
@@ -139,6 +158,7 @@ function handler(socket: net.Socket) {
         parsing: Parsing.Filepath,
         filepath: "",
         range: "",
+        ignorePath: "",
         input: "",
       };
     }
