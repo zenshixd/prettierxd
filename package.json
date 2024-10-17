@@ -11,7 +11,7 @@
     "prepublishOnly": "tsc && node scripts/clean-bin.js",
     "postinstall": "node scripts/postinstall.js",
     "start": " tsc && node index.js",
-    "test": "node --test"
+    "test": "tsc && node --test"
   },
   "files": [
     "index.js",

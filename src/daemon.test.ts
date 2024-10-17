@@ -1,44 +1,43 @@
-import { test, beforeEach, afterEach } from "node:test";
+import { test, before, after } from "node:test";
 import net from "node:net";
 import assert from "node:assert";
-import { SOCKET_FILENAME, startDaemon, parseFirstChunk } from "./daemon.js";
+import { startDaemon } from "./daemon.js";
+import { SOCKET_FILENAME } from "./singleton.js";
 
-let daemonStop;
-beforeEach(() => {
-  daemonStop = startDaemon();
+let daemonStop: () => void;
+before(async () => {
+  daemonStop = await startDaemon();
 });
 
-afterEach(() => {
+after(() => {
+  console.log("stopping daemon");
   daemonStop();
 });
 
-test("should reformat code", (t, done) => {
-  const socket = net.createConnection(
-    {
-      path: SOCKET_FILENAME,
-    },
-    () => {
-      console.log("connected");
-    },
-  );
+test("should reformat code", async () => {
+  return new Promise<void>((resolve) => {
+    const socket = net.createConnection(
+      {
+        path: SOCKET_FILENAME,
+      },
+      () => {
+        console.log("connected");
+      },
+    );
 
-  socket.on("data", (data) => {
-    const result = data.toString();
-    console.log("data", result);
-    assert.equal(result, 'console.log("hello");\n\0');
-    socket.end();
-    done();
+    socket.on("data", (data) => {
+      const result = data.toString();
+      console.log("data", result);
+      assert.equal(result, 'console.log("hello");\0');
+      socket.end();
+      resolve();
+    });
+
+    socket.write(
+      "index.js\0" +
+        "0,10\0" +
+        ".prettierignore\0" +
+        "console.log('hello');\n\0",
+    );
   });
-
-  socket.write("index.js" + "\0" + "0,10\0console.log('hello');\n\0");
-});
-
-test("should parse first chunk", () => {
-  const result = parseFirstChunk(
-    "index.js" + "\0" + "0,10\0console.log('hello');\n\0",
-  );
-  assert.equal(result.path, "index.js");
-  assert.equal(result.rangeStart, 0);
-  assert.equal(result.rangeEnd, 10);
-  assert.equal(result.input, "console.log('hello');\n\0");
 });

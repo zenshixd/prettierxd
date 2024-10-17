@@ -12,3 +12,7 @@ export const delayShutdown = () => {
   clearTimeout(timer);
   timer = setTimeout(exit, TIMEOUT);
 };
+
+export const stopShutdown = () => {
+  clearTimeout(timer);
+};

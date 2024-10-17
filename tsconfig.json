@@ -7,5 +7,5 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "files": ["index.ts", "scripts/clean-bin.ts", "scripts/postinstall.ts"]
+  "include": ["*.ts", "src/**/*.ts", "scripts/*.ts"]
 }

@@ -1,7 +1,7 @@
 import net from "node:net";
 import { createRequire } from "node:module";
 import type Prettier from "prettier";
-import { delayShutdown } from "./shutdown.js";
+import { delayShutdown, stopShutdown } from "./shutdown.js";
 import {
   saveDaemonPid,
   killOtherDaemons,
@@ -19,6 +19,7 @@ export async function startDaemon() {
   server.on("connection", handler);
 
   return () => {
+    stopShutdown();
     server.close();
   };
 }
