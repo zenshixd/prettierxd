@@ -1,6 +1,6 @@
 {
   "name": "prettierxd",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "description": "Deamonified prettier with <5ms run time",
   "main": "index.js",
@@ -10,7 +10,7 @@
   "scripts": {
     "prepublishOnly": "tsc && node scripts/clean-bin.js",
     "postinstall": "node scripts/postinstall.js",
-    "start": " tsc && node index.js",
+    "start": " tsc && node index.js --debug",
     "test": "tsc && node --test"
   },
   "files": [

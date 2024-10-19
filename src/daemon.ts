@@ -1,5 +1,6 @@
 import net from "node:net";
 import { createRequire } from "node:module";
+import { watch, FSWatcher, WatchListener, WatchEventType } from "node:fs";
 import type Prettier from "prettier";
 import { delayShutdown, stopShutdown } from "./shutdown.js";
 import {
@@ -21,6 +22,7 @@ export async function startDaemon() {
   return () => {
     stopShutdown();
     server.close();
+    configCache.forEach(({ watcher }) => watcher.close());
   };
 }
 
@@ -90,7 +92,6 @@ function handler(socket: net.Socket) {
 
     return parseInput(data.slice(endMarkerIndex + END_MARKER.length));
   };
-
   const parseInput = (data: string): boolean => {
     const endMarkerIndex = data.indexOf(END_MARKER);
     if (endMarkerIndex == -1) {
@@ -166,25 +167,41 @@ function handler(socket: net.Socket) {
   });
 }
 
-const moduleCache = new Map<string, typeof Prettier>();
+const moduleCache = new Set<string>();
+let prettierInstance: typeof Prettier | undefined = undefined;
 const require = createRequire(import.meta.url);
 
 function resolvePrettier(filePath: string): typeof Prettier {
-  if (moduleCache.has(filePath)) {
+  if (moduleCache.has(filePath) && prettierInstance != undefined) {
     log("resolvePrettier: cache hit");
-    return moduleCache.get(filePath)!;
+    return prettierInstance;
   }
 
   log("resolvePrettier: cache miss");
   const prettierPath = require.resolve("prettier", { paths: [filePath] });
   const prettierModule = require(prettierPath);
-  moduleCache.set(filePath, prettierModule);
+  if (prettierInstance != prettierModule) {
+    log("resolvePrettier: cache busted! pretterInstance changed");
+    prettierInstance = prettierModule;
+    moduleCache.clear();
+    configFileCache.clear();
+    for (const { watcher } of configCache.values()) {
+      watcher.close();
+    }
+    configCache.clear();
+  }
+  moduleCache.add(filePath);
   log("resolvePrettier: resolved");
   return prettierModule;
 }
 
 const configFileCache = new Map<string, string | null>();
-const configCache = new Map<string, Record<string, any>>();
+
+interface PrettierConfig {
+  watcher: FSWatcher;
+  config: Record<string, any>;
+}
+const configCache = new Map<string, PrettierConfig>();
 
 async function resolveConfig(prettier: typeof Prettier, filePath: string) {
   log("resolveConfig");
@@ -205,7 +222,7 @@ async function resolveConfig(prettier: typeof Prettier, filePath: string) {
 
   if (configCache.has(configFile)) {
     log("resolveConfig: config cache hit");
-    return configCache.get(configFile)!;
+    return configCache.get(configFile)!.config;
   }
 
   log("resolveConfig: config cache miss");
@@ -220,6 +237,57 @@ async function resolveConfig(prettier: typeof Prettier, filePath: string) {
   }
 
   log("resolveConfig: config", config);
-  configCache.set(configFile, config);
+  const watcher = watch(
+    configFile,
+    { encoding: "utf8" },
+    reloadConfig(configFile),
+  );
+  configCache.set(configFile, {
+    config,
+    watcher,
+  });
   return config;
 }
+
+const reloadConfig = (filename: string): WatchListener<string> =>
+  debounce(100, async (event: WatchEventType) => {
+    resetTime();
+    log("reloadConfig, event: ", event, ", filename: ", filename);
+    if (filename == null) {
+      log("reloadConfig: filename is null");
+      return;
+    }
+    let newConfig = await prettierInstance!.resolveConfig(filename, {
+      config: filename,
+      useCache: false,
+      editorconfig: true,
+    });
+    log("reloadConfig: resolved");
+
+    if (newConfig == null) {
+      newConfig = {};
+    }
+
+    const entry = configCache.get(filename)!;
+    configCache.set(filename, {
+      config: newConfig!,
+      watcher: entry.watcher,
+    });
+    log("reloadConfig: done");
+  });
+
+export const debounce = <T extends (...args: any[]) => any>(
+  wait: number,
+  fn: T,
+): T => {
+  let timeout: NodeJS.Timeout | null = null;
+  return ((...args: any[]) => {
+    if (timeout != null) {
+      clearTimeout(timeout);
+    }
+    timeout = setTimeout(() => {
+      timeout = null;
+      fn(...args);
+    }, wait);
+  }) as T;
+};
