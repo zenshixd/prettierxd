@@ -1,6 +1,6 @@
 .{
     .name = "prettierxd",
-    .version = "0.2.4",
+    .version = "0.2.5",
     .dependencies = .{
         .zigcli = .{
             .url = "https://github.com/jiacai2050/zigcli/archive/9e01903d3286deb70ac43296071193fc5f899772.tar.gz",

@@ -81,16 +81,13 @@ fn debugLog(comptime fmt: []const u8, args: anytype) void {
 }
 
 fn streamUntilEof(source_reader: anytype, dest_writer: anytype, buf: []u8) !void {
-    const sourceLen = try source_reader.context.getEndPos();
-    var readLen: usize = 0;
     while (true) {
         const read = try source_reader.read(buf);
         debugLog("read {d}", .{read});
 
         try dest_writer.writeAll(buf[0..read]);
 
-        readLen += read;
-        if (readLen >= sourceLen) break;
+        if (read < buf.len or read == 0) break;
     }
 }
 
